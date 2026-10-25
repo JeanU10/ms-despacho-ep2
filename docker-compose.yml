@@ -1,8 +1,86 @@
 services:
-  despacho-svc:
-    build: .
-    image: duoc/jv0101-caso10-despacho:1.0.0
-    container_name: caso10-despacho-svc
-    ports:
-      - "${PORT:-8080}:8080"
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: despachodb
+      POSTGRES_USER: despacho
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-despacho_local}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U despacho -d despachodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  despacho-svc:
+    image: ${IMAGE_NAME:-ms-despacho}:${IMAGE_TAG:-local}
+    build:
+      context: .
+      args:
+        VCS_REF: ${GITHUB_SHA:-local}
+    expose:
+      - "8080"
+    environment:
+      PORT: "8080"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/despachodb
+      SPRING_DATASOURCE_USERNAME: despacho
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-despacho_local}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_H2_CONSOLE_ENABLED: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      replicas: 2
+      endpoint_mode: vip
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+
+  proxy:
+    image: nginx:1.30.6-alpine
+    user: "101:101"
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      despacho-svc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/despachos"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+volumes:
+  postgres-data:

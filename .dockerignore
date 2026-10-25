@@ -1,5 +1,12 @@
-target/
-*.class
+**/target/
+**/src/test/
+.git/
+.github/
 .idea/
 .vscode/
+docs/
+*.class
 *.iml
+*.log
+.env
+.env.*

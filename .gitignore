@@ -6,4 +6,6 @@ target/
 .vscode/
 .DS_Store
 .env
+.env.*
+!.env.example
 Thumbs.db
