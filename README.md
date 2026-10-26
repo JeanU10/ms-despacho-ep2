@@ -1,17 +1,19 @@
 # Despacho — Microservicio de riesgo despacho
 
+Repositorio de entrega de la EP2: <https://github.com/JeanU10/ms-despacho-ep2>.
+
 Microservicio correspondiente al **caso caso10 — CargoClick** (Logística / courier) de la Evaluación Parcial N°1.
 
 | | |
 |---|---|
 | Asignatura | JVY0101 — Java: Diseño y Construcción de Soluciones Nativas en Nube |
-| Stack | Spring Boot 3.3 · Java 21 · Maven · Spring Data JPA · H2 · springdoc-openapi |
+| Stack | Spring Boot 3.3 · Java 21 · Maven · Spring Data JPA · H2 local · PostgreSQL en Compose · springdoc-openapi |
 | Calidad | JaCoCo cobertura LINE 100% · Cucumber (BDD) alineado a endpoints REST |
 | Entrega | Docker / Docker Compose |
 
 ## Responsabilidad (SRP)
 
-administra los datos y la lógica del dominio de Despacho del caso caso10 (CargoClick). Su base de datos es una **H2 en memoria** (un solo microservicio por base), cumpliendo aislamiento de datos por dominio.
+Administra los datos y la lógica del dominio de Despacho del caso caso10 (CargoClick). Al ejecutarlo directamente usa H2 en memoria; Docker Compose conecta dos réplicas de la API a una base PostgreSQL compartida y persistente.
 
 ## Página de presentación
 
@@ -20,7 +22,7 @@ Al ejecutar el servicio, `http://localhost:8080/` muestra la página de presenta
 - **Swagger UI**: `/swagger-ui/index.html`
 - **OpenAPI (yaml)**: `/v3/api-docs.yaml`
 - **ReDoc**: `/redoc.html`
-- **H2 Console**: `/h2-console`
+- **H2 Console**: `/h2-console` (solo al ejecutar con el perfil local)
 
 ## Endpoints
 
@@ -44,18 +46,28 @@ La documentación completa está en la carpeta [`docs/`](docs/):
 - [`docs/05_Justificacion.md`](docs/05_Justificacion.md) — justificación del servicio: RF/RNF/seguridad cubiertos, stack y por qué cada tecnología AWS
 - [`docs/diagramas/`](docs/diagramas/) — C4 (contexto, contenedores, componentes), secuencia e infraestructura AWS — Docker, Docker Compose e integración
 
-## Cómo ejecutar locmente
+## Cómo ejecutar localmente
 
 ```bash
 mvn spring-boot:run
 ```
 
+La consola web de H2 queda desactivada por defecto. Para habilitarla solo en el entorno local:
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.profiles=local
+```
+
 ## Cómo ejecutar con Docker
 
 ```bash
-docker compose up --build
-# http://localhost:8080
+Copy-Item .env.example .env
+docker compose up --build --wait
+# http://localhost:8080 (Nginx balancea las dos réplicas de la API)
+docker compose ps
 ```
+
+Compose guarda PostgreSQL en un volumen local. La contraseña predeterminada de `.env.example` sirve únicamente para desarrollo local; en otros entornos debe suministrarse una contraseña protegida mediante `POSTGRES_PASSWORD`.
 
 ## Cómo ejecutar las pruebas
 
@@ -63,3 +75,37 @@ docker compose up --build
 mvn test      # unit tests + Cucumber
 mvn verify    # + verificación de cobertura JaCoCo (100% LINE, falla si baja)
 ```
+
+## Pipeline CI/CD de la EP2
+
+El workflow `.github/workflows/ci-cd.yml` se ejecuta en cada push y pull request. Primero ejecuta `mvn verify`, que corre las pruebas unitarias y Cucumber y aplica el umbral JaCoCo configurado en el proyecto; luego construye la imagen Docker optimizada y valida Compose. SonarQube Cloud analiza pull requests originados en este repositorio y los cambios de `main`, y el workflow espera el resultado de la Quality Gate. En pushes a otras ramas, las pruebas, la cobertura, la construcción y la validación de Compose siguen ejecutándose, pero se omite el análisis de rama: el plan configurado permite el análisis de PR y `main`, no el de ramas adicionales. Los pull requests desde forks también omiten SonarCloud porque GitHub no entrega secretos del repositorio a esos workflows. Si una etapa activa falla, el job queda bloqueado y no se ejecuta el despliegue.
+
+```mermaid
+flowchart LR
+    A[Push o Pull Request] --> B[mvn verify<br/>pruebas + JaCoCo]
+    B --> C[Build de imagen Docker]
+    C --> D[Validación Compose]
+    D --> E{PR o main?}
+    E -->|sí| F[SonarCloud + Quality Gate]
+    E -->|no| G[CI terminado]
+    F --> G
+    G --> H{Push a main?}
+    H -->|sí| I[Compose: PostgreSQL + 2 réplicas + Nginx]
+    H -->|no| J[Fin]
+    I --> K[Smoke test CRUD + metadata del commit]
+    K --> L[Apagar entorno simulado]
+```
+
+En los pushes a `main` que superan esos pasos, GitHub Actions construye la imagen y levanta en el runner un entorno simulado con Nginx, dos réplicas de la API y PostgreSQL. El workflow usa una contraseña efímera, valida operaciones de lectura y escritura a través del proxy, guarda un artefacto `deployment-metadata` con el commit y la etiqueta usados y elimina el entorno al terminar. No publica una imagen en un registry ni deja un servicio alojado permanentemente.
+
+Docker Compose aplica límites de CPU y memoria, ejecuta la aplicación como usuario no root, elimina capacidades Linux, impide la elevación de privilegios y usa healthchecks para la base de datos, las réplicas y el proxy. PostgreSQL permanece en una red interna y sus datos sobreviven a la recreación de los contenedores gracias al volumen nombrado.
+
+### Configuración de GitHub y SonarQube Cloud
+
+La integración de este repositorio usa el secreto `SONAR_TOKEN` y las variables `SONAR_ORGANIZATION` y `SONAR_PROJECT_KEY`, configurados en **Settings → Secrets and variables → Actions**. La regla de `main` exige el check `Build, tests, coverage and SonarCloud` y una aprobación del pull request. Las alertas y actualizaciones de Dependabot están habilitadas; `.github/dependabot.yml` solicita actualizaciones semanales para Maven y GitHub Actions. Para replicar la integración en otra copia, primero impórtala en SonarQube Cloud y configura esos valores en los ajustes del repositorio.
+
+Para cambiar el puerto publicado localmente, definir `HOST_PORT`; para identificar una construcción local, definir `IMAGE_TAG`. El workflow usa el SHA completo del commit como etiqueta.
+
+## Declaración de uso de IA en esta entrega
+
+Se utilizó OpenAI ChatGPT (Codex) como apoyo para revisar los requisitos de la EP2, proponer la configuración inicial de Docker, Docker Compose, GitHub Actions y Dependabot, y estructurar esta documentación. El equipo debe revisar y validar los cambios antes de entregar. En esta intervención no se redactaron conclusiones ni reflexiones individuales.

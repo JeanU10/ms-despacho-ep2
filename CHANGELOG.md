@@ -2,6 +2,18 @@
 
 Formato basado en Keep a Changelog. Versionado semántico (MAJOR.MINOR.PATCH).
 
+## [Unreleased]
+
+### Added
+
+- Pipeline de GitHub Actions con pruebas, control JaCoCo, build de imagen Docker y análisis SonarCloud con bloqueo por Quality Gate.
+- Despliegue simulado en GitHub Actions con Docker Compose, dos réplicas, Nginx y PostgreSQL persistente.
+- Actualizaciones semanales de Maven y GitHub Actions mediante Dependabot.
+
+### Changed
+
+- Docker Compose local usa PostgreSQL compartido para habilitar escalamiento horizontal; H2 queda disponible para ejecución local y pruebas.
+
 ## [1.0.0] — 2026-08
 
 ### Added
