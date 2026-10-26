@@ -15,7 +15,7 @@ RUN addgroup -S app && adduser -S -G app app
 
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="ms-despacho" \
-      org.opencontainers.image.source="https://github.com/miguelcamposdasilva/ms-despacho" \
+      org.opencontainers.image.source="https://github.com/JeanU10/ms-despacho-ep2" \
       org.opencontainers.image.revision="${VCS_REF}"
 
 COPY --from=build --chown=app:app /app/target/despacho-svc-*.jar /app/app.jar

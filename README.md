@@ -1,5 +1,7 @@
 # Despacho — Microservicio de riesgo despacho
 
+Repositorio de entrega de la EP2: <https://github.com/JeanU10/ms-despacho-ep2>.
+
 Microservicio correspondiente al **caso caso10 — CargoClick** (Logística / courier) de la Evaluación Parcial N°1.
 
 | | |
