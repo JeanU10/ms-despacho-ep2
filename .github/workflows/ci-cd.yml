@@ -99,7 +99,7 @@ jobs:
         run: echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
 
       - name: Build and start the simulated deployment
-        run: docker compose up --build --detach --wait --wait-timeout 120
+        run: docker compose up --build --detach --wait --wait-timeout 120 --scale despacho-svc=2
 
       - name: Verify the deployed API
         run: |
