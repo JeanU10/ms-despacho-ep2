@@ -78,30 +78,31 @@ mvn verify    # + verificación de cobertura JaCoCo (100% LINE, falla si baja)
 
 ## Pipeline CI/CD de la EP2
 
-El workflow `.github/workflows/ci-cd.yml` se ejecuta en cada push y pull request. Primero ejecuta `mvn verify`, que corre las pruebas unitarias y Cucumber y aplica el umbral JaCoCo configurado en el proyecto; luego construye la imagen Docker optimizada y valida Compose. Después envía el análisis a SonarQube Cloud y espera el resultado de la Quality Gate. Si las pruebas, la cobertura, la construcción o la Quality Gate fallan, el job queda bloqueado y no se ejecuta el despliegue.
+El workflow `.github/workflows/ci-cd.yml` se ejecuta en cada push y pull request. Primero ejecuta `mvn verify`, que corre las pruebas unitarias y Cucumber y aplica el umbral JaCoCo configurado en el proyecto; luego construye la imagen Docker optimizada y valida Compose. SonarQube Cloud analiza pull requests originados en este repositorio y los cambios de `main`, y el workflow espera el resultado de la Quality Gate. En pushes a otras ramas, las pruebas, la cobertura, la construcción y la validación de Compose siguen ejecutándose, pero se omite el análisis de rama: el plan configurado permite el análisis de PR y `main`, no el de ramas adicionales. Los pull requests desde forks también omiten SonarCloud porque GitHub no entrega secretos del repositorio a esos workflows. Si una etapa activa falla, el job queda bloqueado y no se ejecuta el despliegue.
 
 ```mermaid
 flowchart LR
     A[Push o Pull Request] --> B[mvn verify<br/>pruebas + JaCoCo]
     B --> C[Build de imagen Docker]
     C --> D[Validación Compose]
-    D --> E[SonarCloud + Quality Gate]
-    E --> F[CI terminado]
-    E -->|solo push a main| G[Compose: PostgreSQL + 2 réplicas + Nginx]
-    G --> H[Smoke test CRUD + metadata del commit]
-    H --> I[Apagar entorno simulado]
+    D --> E{PR o main?}
+    E -->|sí| F[SonarCloud + Quality Gate]
+    E -->|no| G[CI terminado]
+    F --> G
+    G --> H{Push a main?}
+    H -->|sí| I[Compose: PostgreSQL + 2 réplicas + Nginx]
+    H -->|no| J[Fin]
+    I --> K[Smoke test CRUD + metadata del commit]
+    K --> L[Apagar entorno simulado]
 ```
 
 En los pushes a `main` que superan esos pasos, GitHub Actions construye la imagen y levanta en el runner un entorno simulado con Nginx, dos réplicas de la API y PostgreSQL. El workflow usa una contraseña efímera, valida operaciones de lectura y escritura a través del proxy, guarda un artefacto `deployment-metadata` con el commit y la etiqueta usados y elimina el entorno al terminar. No publica una imagen en un registry ni deja un servicio alojado permanentemente.
 
 Docker Compose aplica límites de CPU y memoria, ejecuta la aplicación como usuario no root, elimina capacidades Linux, impide la elevación de privilegios y usa healthchecks para la base de datos, las réplicas y el proxy. PostgreSQL permanece en una red interna y sus datos sobreviven a la recreación de los contenedores gracias al volumen nombrado.
 
-### Configuración necesaria en GitHub
+### Configuración de GitHub y SonarQube Cloud
 
-1. Importar este repositorio en SonarQube Cloud y crear un token con permiso para analizar el proyecto.
-2. En **Settings → Secrets and variables → Actions**, crear el secreto `SONAR_TOKEN` y las variables de repositorio `SONAR_ORGANIZATION` y `SONAR_PROJECT_KEY` con los valores que entrega SonarQube Cloud.
-3. En las reglas de protección de `main`, exigir el job de calidad de este workflow antes de permitir un merge.
-4. Confirmar en **Settings → Security** que las alertas y actualizaciones de Dependabot estén habilitadas. `.github/dependabot.yml` solicita actualizaciones semanales para Maven y GitHub Actions.
+La integración de este repositorio usa el secreto `SONAR_TOKEN` y las variables `SONAR_ORGANIZATION` y `SONAR_PROJECT_KEY`, configurados en **Settings → Secrets and variables → Actions**. La regla de `main` exige el check `Build, tests, coverage and SonarCloud` y una aprobación del pull request. Las alertas y actualizaciones de Dependabot están habilitadas; `.github/dependabot.yml` solicita actualizaciones semanales para Maven y GitHub Actions. Para replicar la integración en otra copia, primero impórtala en SonarQube Cloud y configura esos valores en los ajustes del repositorio.
 
 Para cambiar el puerto publicado localmente, definir `HOST_PORT`; para identificar una construcción local, definir `IMAGE_TAG`. El workflow usa el SHA completo del commit como etiqueta.
 
