@@ -300,7 +300,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
-          tags: type=sha,format=long
+          tags: type=sha,format=long,prefix=
 
       - name: Build and publish the immutable application image
         if: steps.preflight.outputs.enabled == 'true'
