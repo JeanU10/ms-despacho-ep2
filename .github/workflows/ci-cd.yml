@@ -4,6 +4,17 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      simulate_critical_failure:
+        description: Simula un fallo crítico de calidad para demostrar que no se despliega
+        required: false
+        type: boolean
+        default: false
+      deploy_kubernetes:
+        description: Habilita el despliegue manual al clúster EKS académico
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,6 +25,8 @@ jobs:
     name: Build, tests, coverage and SonarCloud
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      line_coverage_percent: ${{ steps.coverage.outputs.line_coverage_percent }}
     permissions:
       contents: read
     steps:
@@ -32,6 +45,35 @@ jobs:
       - name: Run unit, API and Cucumber tests with coverage gate
         run: mvn --batch-mode --no-transfer-progress verify
 
+      - name: Demonstrate a critical quality failure (manual only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_critical_failure }}
+        run: |
+          echo "::error::Demostración: una falla crítica de calidad debe detener el pipeline antes del despliegue."
+          exit 1
+
+      - name: Extract JaCoCo line coverage for the dashboard
+        id: coverage
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("target/site/jacoco/jacoco.xml").getroot()
+          counter = root.find("counter[@type='LINE']")
+          if counter is None:
+              raise SystemExit("JaCoCo report has no top-level LINE counter")
+          covered = int(counter.attrib["covered"])
+          missed = int(counter.attrib["missed"])
+          total = covered + missed
+          if total == 0:
+              raise SystemExit("JaCoCo reported zero lines")
+          coverage = covered * 100 / total
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"line_coverage_percent={coverage:.2f}\n")
+          print(f"JaCoCo line coverage: {coverage:.2f}%")
+          PY
+
       - name: Build the optimized Docker image
         run: |
           docker build --pull \
@@ -39,7 +81,24 @@ jobs:
             --build-arg "VCS_REF=${GITHUB_SHA}" .
 
       - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
+        run: docker compose --profile observability config --quiet
+
+      - name: Set up kubectl for manifest validation
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.1
+
+      - name: Validate Kubernetes manifests against API schemas
+        run: kubectl kustomize deploy/k8s | docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary -
+
+      - name: Scan Kubernetes configuration for high-risk misconfiguration
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: config
+          scan-ref: deploy/k8s
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "1"
 
       - name: Save test and coverage reports
         if: always()
@@ -81,8 +140,8 @@ jobs:
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=600
 
-  deploy:
-    name: Deploy simulation with Docker Compose
+  deploy-compose:
+    name: Deploy simulation with Docker Compose and observability
     needs: quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -93,15 +152,21 @@ jobs:
       IMAGE_NAME: ms-despacho
       IMAGE_TAG: ${{ github.sha }}
       HOST_PORT: "8080"
+      LINE_COVERAGE_PERCENT: ${{ needs.quality.outputs.line_coverage_percent }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
       - name: Generate an ephemeral database password
-        run: echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
 
-      - name: Build and start the simulated deployment
-        run: docker compose up --build --detach --wait --wait-timeout 120 --scale despacho-svc=2
+      - name: Build and start the API, database and observability stack
+        run: |
+          started=$(date +%s)
+          docker compose --profile observability up --build --detach --wait --wait-timeout 180 --scale despacho-svc=2
+          echo "DEPLOYMENT_DURATION_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
 
       - name: Verify the deployed API
         run: |
@@ -120,10 +185,49 @@ jobs:
           curl --fail --silent --show-error -X DELETE \
             "http://localhost:${HOST_PORT}/api/despachos/${id}" > /dev/null
 
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "http://localhost:${HOST_PORT}/api/despachos/9223372036854775807")
+          test "$status" = "404"
+
+      - name: Publish CI metrics and verify the dashboard data sources
+        run: |
+          printf 'ci_deployment_duration_seconds %s\nci_line_coverage_percent %s\n' \
+            "$DEPLOYMENT_DURATION_SECONDS" "$LINE_COVERAGE_PERCENT" \
+            | curl --fail --silent --show-error --data-binary @- \
+                http://localhost:9091/metrics/job/ep3_deployment/branch/main
+
+          for attempt in $(seq 1 24); do
+            if curl --fail --silent --show-error --get \
+              --data-urlencode 'query=up{job="despacho"}' \
+              http://localhost:9090/api/v1/query \
+              | jq -e '.data.result | length == 2 and all(.[]; .value[1] == "1")' > /dev/null; then
+              break
+            fi
+            if [[ "$attempt" -eq 24 ]]; then
+              echo "::error::Prometheus did not report the API targets as up."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 \
+            -u "admin:${GRAFANA_ADMIN_PASSWORD}" \
+            http://localhost:3000/api/dashboards/uid/ms-despacho-ep3 \
+            | jq -e '.dashboard.uid == "ms-despacho-ep3"' > /dev/null
+
+          {
+            echo "## EP3 observability smoke test"
+            echo "- Deployment duration: ${DEPLOYMENT_DURATION_SECONDS}s"
+            echo "- JaCoCo line coverage: ${LINE_COVERAGE_PERCENT}%"
+            echo "- Prometheus API targets: up"
+            echo "- Grafana dashboard: ms-despacho-ep3"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Record deployment trace
         run: |
-          printf 'commit_sha=%s\nimage=%s:%s\nreplicas=2\nproxy=nginx\ndatabase=postgresql\ndeployed_at_utc=%s\nsmoke_test=passed\n' \
+          printf 'commit_sha=%s\nimage=%s:%s\nreplicas=2\nproxy=nginx\ndatabase=postgresql\ndeployed_at_utc=%s\ndeployment_duration_seconds=%s\nline_coverage_percent=%s\nsmoke_test=passed\n' \
             "$GITHUB_SHA" "$IMAGE_NAME" "$IMAGE_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "$DEPLOYMENT_DURATION_SECONDS" "$LINE_COVERAGE_PERCENT" \
             | tee deployment-metadata.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload deployment metadata
@@ -141,4 +245,145 @@ jobs:
 
       - name: Stop the simulated deployment
         if: always()
-        run: docker compose down --remove-orphans
+        run: docker compose --profile observability down --remove-orphans
+
+  deploy-kubernetes:
+    name: Deploy to the academic EKS cluster
+    needs: quality
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.deploy_kubernetes)
+    runs-on: [self-hosted, linux, x64, ep3-runner]
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: us-east-1
+      EKS_CLUSTER_NAME: ms-despacho-ep3
+      ECR_REGISTRY: 891376964683.dkr.ecr.us-east-1.amazonaws.com
+      ECR_REPOSITORY: ms-despacho-ep3
+      KUBE_DB_PASSWORD: ${{ secrets.KUBE_DB_PASSWORD }}
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+      LINE_COVERAGE_PERCENT: ${{ needs.quality.outputs.line_coverage_percent }}
+    steps:
+      - name: Check whether a Kubernetes target is configured
+        id: preflight
+        shell: bash
+        run: |
+          if [[ -z "$KUBE_DB_PASSWORD" || -z "$GRAFANA_ADMIN_PASSWORD" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Kubernetes deploy skipped: configure KUBE_DB_PASSWORD and GRAFANA_ADMIN_PASSWORD repository secrets." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: steps.preflight.outputs.enabled == 'true'
+        uses: actions/checkout@v7
+
+      - name: Set up kubectl
+        if: steps.preflight.outputs.enabled == 'true'
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.1
+
+      - name: Set up Docker Buildx
+        if: steps.preflight.outputs.enabled == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Amazon ECR
+        if: steps.preflight.outputs.enabled == 'true'
+        shell: bash
+        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - name: Prepare a normalized image tag
+        if: steps.preflight.outputs.enabled == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
+          tags: type=sha,format=long
+
+      - name: Build and publish the immutable application image
+        if: steps.preflight.outputs.enabled == 'true'
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: VCS_REF=${{ github.sha }}
+
+      - name: Configure EKS access with the runner instance role
+        if: steps.preflight.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+          kubectl config current-context
+
+      - name: Install local persistent-volume provisioner
+        if: steps.preflight.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          kubectl apply -k deploy/storage
+          kubectl rollout status deployment/local-path-provisioner --namespace local-path-storage --timeout=180s
+
+      - name: Create namespace and runtime secrets
+        if: steps.preflight.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          kubectl create namespace despacho --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic db-credentials --namespace despacho \
+            --from-literal=POSTGRES_PASSWORD="$KUBE_DB_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic grafana-admin --namespace despacho \
+            --from-literal=admin_password="$GRAFANA_ADMIN_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply manifests and verify Kubernetes rollout
+        if: steps.preflight.outputs.enabled == 'true'
+        id: rollout
+        shell: bash
+        run: |
+          started=$(date +%s)
+          image="${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          kubectl apply -k deploy/k8s
+          kubectl set image deployment/despacho-svc despacho-svc="$image" --namespace despacho
+          kubectl rollout status statefulset/postgres --namespace despacho --timeout=240s
+          for deployment in despacho-svc prometheus pushgateway loki alloy grafana; do
+            kubectl rollout status "deployment/${deployment}" --namespace despacho --timeout=240s
+          done
+          duration=$(( $(date +%s) - started ))
+          echo "duration=${duration}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test the cluster service and publish metrics
+        if: steps.preflight.outputs.enabled == 'true'
+        env:
+          DEPLOYMENT_DURATION_SECONDS: ${{ steps.rollout.outputs.duration }}
+        shell: bash
+        run: |
+          kubectl port-forward --namespace despacho --address 127.0.0.1 service/despacho-svc 18080:8080 > /tmp/despacho-port-forward.log 2>&1 &
+          api_forward_pid=$!
+          kubectl port-forward --namespace despacho --address 127.0.0.1 service/pushgateway 19091:9091 > /tmp/pushgateway-port-forward.log 2>&1 &
+          push_forward_pid=$!
+          trap 'kill "$api_forward_pid" "$push_forward_pid" 2>/dev/null || true' EXIT
+
+          ready=false
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/actuator/health/readiness > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$ready" == true ]] || { cat /tmp/despacho-port-forward.log; exit 1; }
+
+          curl --fail --silent --show-error http://127.0.0.1:18080/api/despachos > /dev/null
+          duration="$DEPLOYMENT_DURATION_SECONDS"
+          printf 'ci_deployment_duration_seconds %s\nci_line_coverage_percent %s\n' \
+            "$duration" "$LINE_COVERAGE_PERCENT" \
+            | curl --fail --silent --show-error --data-binary @- \
+                http://127.0.0.1:19091/metrics/job/ep3_deployment/branch/main
+          echo "Kubernetes API smoke test passed; deploy duration=${duration}s; coverage=${LINE_COVERAGE_PERCENT}%" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Explain skipped Kubernetes deployment
+        if: steps.preflight.outputs.enabled != 'true'
+        run: echo "Configure KUBE_DB_PASSWORD and GRAFANA_ADMIN_PASSWORD to enable Kubernetes deployment." >> "$GITHUB_STEP_SUMMARY"

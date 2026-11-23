@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: despacho
+
+resources:
+  - namespace.yaml
+  - database.yaml
+  - application.yaml
+  - network-policy.yaml
+  - monitoring.yaml
+  - loki.yaml
+  - alloy.yaml
+
+configMapGenerator:
+  - name: despacho-config
+    literals:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/despachodb
+      - SPRING_DATASOURCE_USERNAME=despacho
+      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - APP_ENV=production
+  - name: prometheus-config
+    files:
+      - prometheus.yml=config/observability/prometheus/prometheus-k8s.yml
+  - name: loki-config
+    files:
+      - loki-config.yaml=config/observability/loki/loki-config.yaml
+  - name: alloy-config
+    files:
+      - config.alloy=config/observability/alloy/kubernetes.alloy
+  - name: grafana-datasources
+    files:
+      - datasources.yaml=config/observability/grafana/provisioning/datasources/datasources.yaml
+  - name: grafana-dashboard-providers
+    files:
+      - dashboards.yaml=config/observability/grafana/provisioning/dashboards/dashboards.yaml
+  - name: grafana-dashboards
+    files:
+      - despacho-overview.json=config/observability/grafana/dashboards/despacho-overview.json

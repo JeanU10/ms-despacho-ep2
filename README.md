@@ -7,9 +7,10 @@ Microservicio correspondiente al **caso caso10 — CargoClick** (Logística / co
 | | |
 |---|---|
 | Asignatura | JVY0101 — Java: Diseño y Construcción de Soluciones Nativas en Nube |
-| Stack | Spring Boot 3.3 · Java 21 · Maven · Spring Data JPA · H2 local · PostgreSQL en Compose · springdoc-openapi |
-| Calidad | JaCoCo cobertura LINE 100% · Cucumber (BDD) alineado a endpoints REST |
-| Entrega | Docker / Docker Compose |
+| Stack | Spring Boot 3.3 · Java 21 · Maven · Spring Data JPA · H2 local · PostgreSQL · Kubernetes |
+| Calidad | JaCoCo cobertura LINE 100% · Cucumber (BDD) · SonarCloud · Trivy IaC |
+| Observabilidad | Actuator/Micrometer · Prometheus · Grafana · Loki · Grafana Alloy |
+| Entrega | Docker Compose para integración local · Kubernetes para despliegue orquestado |
 
 ## Responsabilidad (SRP)
 
@@ -44,6 +45,8 @@ La documentación completa está en la carpeta [`docs/`](docs/):
 - [`docs/03_Pruebas.md`](docs/03_Pruebas.md) — tests unitarios, cobertura y Cucumber
 - [`docs/04_Despliegue.md`](docs/04_Despliegue.md)
 - [`docs/05_Justificacion.md`](docs/05_Justificacion.md) — justificación del servicio: RF/RNF/seguridad cubiertos, stack y por qué cada tecnología AWS
+- [`docs/06_Observabilidad_EP3.md`](docs/06_Observabilidad_EP3.md) — arquitectura, métricas, dashboard y controles de la EP3
+- [`docs/07_Evidencia_EP3.md`](docs/07_Evidencia_EP3.md) — guía breve de validación y evidencia para la rúbrica
 - [`docs/diagramas/`](docs/diagramas/) — C4 (contexto, contenedores, componentes), secuencia e infraestructura AWS — Docker, Docker Compose e integración
 
 ## Cómo ejecutar localmente
@@ -68,6 +71,15 @@ docker compose ps
 ```
 
 Compose guarda PostgreSQL en un volumen local. La contraseña predeterminada de `.env.example` sirve únicamente para desarrollo local; en otros entornos debe suministrarse una contraseña protegida mediante `POSTGRES_PASSWORD`.
+
+Para levantar también el stack local de observabilidad:
+
+```powershell
+Copy-Item .env.example .env
+docker compose --profile observability up --build --wait --scale despacho-svc=2
+```
+
+Grafana queda en `http://localhost:3000` (usuario `admin`; contraseña en `.env`), Prometheus en `http://localhost:9090` y Pushgateway en `http://localhost:9091`. Alloy lee los logs de contenedores Compose de este proyecto y los envía a Loki. El perfil es solo para desarrollo local: Alloy requiere acceso al socket de Docker. No expongas esos puertos fuera del equipo.
 
 ## Cómo ejecutar las pruebas
 
@@ -96,9 +108,17 @@ flowchart LR
     K --> L[Apagar entorno simulado]
 ```
 
-En los pushes a `main` que superan esos pasos, GitHub Actions construye la imagen y levanta en el runner un entorno simulado con Nginx, dos réplicas de la API y PostgreSQL. El workflow usa una contraseña efímera, valida operaciones de lectura y escritura a través del proxy, guarda un artefacto `deployment-metadata` con el commit y la etiqueta usados y elimina el entorno al terminar. No publica una imagen en un registry ni deja un servicio alojado permanentemente.
+En los pushes a `main` que superan esos pasos, GitHub Actions levanta en un runner hospedado por GitHub un entorno simulado con Nginx, dos réplicas de la API, PostgreSQL y el stack de observabilidad. Ejecuta un smoke test CRUD y un 404 controlado, publica duración de despliegue y cobertura en Pushgateway y confirma que Prometheus detecta la API y que Grafana cargó el dashboard. Guarda `deployment-metadata` y elimina el entorno al terminar. El job Kubernetes usa un runner autohospedado en AWS, publica una imagen etiquetada por SHA en ECR y despliega en EKS. Puede ejecutarse al actualizar `main` o manualmente con `deploy_kubernetes=true`.
 
-Docker Compose aplica límites de CPU y memoria, ejecuta la aplicación como usuario no root, elimina capacidades Linux, impide la elevación de privilegios y usa healthchecks para la base de datos, las réplicas y el proxy. PostgreSQL permanece en una red interna y sus datos sobreviven a la recreación de los contenedores gracias al volumen nombrado.
+Docker Compose aplica límites de CPU y memoria, ejecuta la aplicación como usuario no root, elimina capacidades Linux, impide la elevación de privilegios y usa healthchecks para la base de datos, las réplicas y el proxy. PostgreSQL permanece en una red interna y sus datos sobreviven a la recreación de los contenedores gracias al volumen nombrado. El endpoint Actuator no se publica por Nginx; Prometheus lo consulta desde la red interna.
+
+### Extensión EP3: Kubernetes y gates de seguridad
+
+Los manifiestos de `deploy/k8s/` despliegan PostgreSQL con volumen persistente, dos réplicas de la API, probes, límites de recursos, política de red, Prometheus, Pushgateway, Loki, Alloy y Grafana. La validación del workflow ejecuta Kustomize, Kubeconform y Trivy sobre los manifiestos. La Quality Gate de SonarCloud y el umbral JaCoCo siguen bloqueando los jobs de despliegue cuando fallan.
+
+El job Kubernetes requiere los secretos `KUBE_DB_PASSWORD` y `GRAFANA_ADMIN_PASSWORD`. El runner obtiene credenciales AWS temporales del perfil de instancia y crea su kubeconfig en tiempo de ejecución; los nodos leen la imagen privada directamente desde ECR con su rol IAM. Para desplegar desde esta rama, ejecuta manualmente `CI/CD` con `deploy_kubernetes=true`. Para demostrar el gate sin desplegar, ejecuta `CI/CD` con `simulate_critical_failure=true`: falla la etapa de calidad y el despliegue Kubernetes queda omitido.
+
+La guía de despliegue, el dashboard y la matriz contra la rúbrica están en [`docs/06_Observabilidad_EP3.md`](docs/06_Observabilidad_EP3.md) y [`docs/07_Evidencia_EP3.md`](docs/07_Evidencia_EP3.md).
 
 ### Configuración de GitHub y SonarQube Cloud
 
@@ -108,4 +128,6 @@ Para cambiar el puerto publicado localmente, definir `HOST_PORT`; para identific
 
 ## Declaración de uso de IA en esta entrega
 
-Se utilizó OpenAI ChatGPT (Codex) como apoyo para revisar los requisitos de la EP2, proponer la configuración inicial de Docker, Docker Compose, GitHub Actions y Dependabot, y estructurar esta documentación. El equipo debe revisar y validar los cambios antes de entregar. En esta intervención no se redactaron conclusiones ni reflexiones individuales.
+Para la EP2 se utilizó OpenAI ChatGPT (Codex) como apoyo para revisar requisitos, proponer la configuración inicial de Docker, Docker Compose, GitHub Actions y Dependabot, y estructurar documentación. El equipo debe revisar y validar esos cambios.
+
+Para la EP3 se utilizó OpenAI ChatGPT (Codex) como consultor técnico para identificar errores y proponer ajustes de implementación y configuración de monitoreo, Kubernetes y CI/CD. El equipo debe verificar el despliegue y la evidencia antes de entregar. Se cita el uso conforme a la [guía de IA de Biblioteca DUOC UC](https://bibliotecas.duoc.cl/ia).

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Despacho EP3
+    orgId: 1
+    folder: DevOps EP3
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

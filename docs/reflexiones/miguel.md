@@ -1,3 +1,3 @@
 # Reflexión individual — Miguel
 
-Mi reflexión final sobre este trabajo es que estas herramientas son de gran ayuda al momento de trabajar en equipo ya que se mantiene una trazabilidad del código correcta con revisiones correspondientes, entornos de prueba, manteniendo asi una lógica perfecta en caso de fallos. Lo que mas interesante me pareció son las herramientas de monitoreo del código en caso de vulnerabilidades, ya que las brechas de seguridad mas graves comienzan en los sitios donde no vemos o prestamos mas atención, las puertas traseras.
+El proyecto mostró el valor de la trazabilidad en GitHub y de las revisiones automatizadas para trabajar en equipo. También comprendí la diferencia entre las métricas de Prometheus, los logs de Loki y los controles de seguridad: juntos ayudan a investigar problemas y detener fallas antes del despliegue. En la EP3 se validaron el stack local y los manifiestos; eso no equivale a un despliegue real en la nube.

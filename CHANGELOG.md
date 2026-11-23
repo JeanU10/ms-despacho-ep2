@@ -6,6 +6,10 @@ Formato basado en Keep a Changelog. Versionado semántico (MAJOR.MINOR.PATCH).
 
 ### Added
 
+- Extensión EP3 con Spring Boot Actuator, Prometheus, Grafana, Loki y Grafana Alloy para métricas y logs.
+- Dashboard provisionado con tiempo de despliegue, cobertura, disponibilidad, CPU, memoria, errores HTTP y logs.
+- Manifiestos Kubernetes Kustomize con dos réplicas, PostgreSQL persistente, probes, controles de contenedor y política de red.
+- Gates CI de validación Kustomize/Kubeconform/Trivy y demostración manual de falla crítica que bloquea despliegues.
 - Pipeline de GitHub Actions con pruebas, control JaCoCo, build de imagen Docker y análisis SonarCloud con bloqueo por Quality Gate.
 - Despliegue simulado en GitHub Actions con Docker Compose, dos réplicas, Nginx y PostgreSQL persistente.
 - Actualizaciones semanales de Maven y GitHub Actions mediante Dependabot.

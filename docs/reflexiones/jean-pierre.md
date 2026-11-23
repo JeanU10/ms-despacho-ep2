@@ -1,3 +1,3 @@
 # Reflexión individual — Jean Pierre
 
-Mi ruta de trabajo sobre el proyecto fue primero darmecuenta que lei mal la rubrica al no darme cuenta de que no hera necesario realizar la subida a aws sino que se podia realizar en docker compose, aprender y comprender por primera ves el funcionamiento de sonar cloud aprender a trabajar de manera mas optima con guithub y asignación de permisos, además de reafirmar el echo de que pautar una ruta de trabajo colaborativa antes de proceder a trabajar es de las mejores deciciones que se pueden tomar.
+Al revisar la rúbrica de la EP2, entendí que había interpretado mal el despliegue: AWS no era obligatorio y Docker Compose era una alternativa válida. Aprendí los fundamentos de SonarCloud y a gestionar mejor las ramas y los permisos de GitHub. En la EP3, relacioné métricas, logs y probes con la disponibilidad; los manifiestos se validaron estáticamente, pero un despliegue Kubernetes real aún requiere un clúster y sus credenciales.
