@@ -92,7 +92,7 @@ jobs:
         run: kubectl kustomize deploy/k8s | docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary -
 
       - name: Scan Kubernetes configuration for high-risk misconfiguration
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: deploy/k8s
