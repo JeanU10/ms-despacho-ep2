@@ -34,6 +34,36 @@ spec:
         fsGroup: 70
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: set-volume-ownership
+          image: busybox:1.37.0
+          command:
+            - sh
+            - -c
+            - chown -R 70:70 /var/lib/postgresql/data /var/run/postgresql && chmod 700 /var/lib/postgresql/data /var/run/postgresql
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-run
+              mountPath: /var/run/postgresql
       containers:
         - name: postgres
           image: postgres:17-alpine
