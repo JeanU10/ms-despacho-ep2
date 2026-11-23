@@ -251,7 +251,7 @@ jobs:
     name: Deploy to the academic EKS cluster
     needs: quality
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.deploy_kubernetes)
-    runs-on: [self-hosted, linux, x64, ep3-runner]
+    runs-on: [self-hosted, windows, x64, ep3-runner]
     timeout-minutes: 25
     permissions:
       contents: read
@@ -312,7 +312,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: VCS_REF=${{ github.sha }}
 
-      - name: Configure EKS access with the runner instance role
+      - name: Configure EKS access with the academic AWS CLI profile
         if: steps.preflight.outputs.enabled == 'true'
         shell: bash
         run: |

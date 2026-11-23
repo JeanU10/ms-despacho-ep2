@@ -56,6 +56,6 @@ Las métricas de CPU/memoria corresponden al proceso JVM; para producción convi
 
 ## Límites y configuración necesaria
 
-El pipeline ejecuta de forma automática la simulación de Compose en `main`. El despliegue a EKS usa un runner autohospedado dentro de AWS y el perfil de instancia para obtener credenciales IAM; la imagen queda en ECR privado y el rol de los nodos la descarga. Solo requiere los secretos `KUBE_DB_PASSWORD` y `GRAFANA_ADMIN_PASSWORD`. En una rama de evaluación se puede activar manualmente con `deploy_kubernetes=true`.
+El pipeline ejecuta de forma automática la simulación de Compose en `main`. El despliegue a EKS usa un runner efímero autohospedado en el equipo de evaluación y el perfil AWS local para obtener credenciales IAM; la imagen queda en ECR privado y el rol de los nodos la descarga. Solo requiere los secretos `KUBE_DB_PASSWORD` y `GRAFANA_ADMIN_PASSWORD`. En una rama de evaluación se puede activar manualmente con `deploy_kubernetes=true`.
 
 El perfil local de Compose monta el socket de Docker para que Alloy pueda leer logs. Ese acceso concede control amplio sobre el motor local y se limita al perfil de demostración. En Kubernetes, Alloy usa la API con permisos de lectura.

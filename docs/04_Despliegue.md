@@ -73,7 +73,7 @@ kubectl apply -k deploy/k8s
 kubectl get pods,services,pvc -n despacho
 ```
 
-En Docker Desktop/Kubernetes, la imagen `ms-despacho:local` debe estar disponible para el nodo. Para EKS, el workflow construye una imagen etiquetada por SHA y la publica en ECR. El runner autohospedado usa un rol de instancia IAM para autenticarse ante AWS y el clúster; los nodos descargan ECR con su propio rol. Solo se guardan `KUBE_DB_PASSWORD` y `GRAFANA_ADMIN_PASSWORD` como secretos de Actions. El pipeline crea los secretos en el namespace y aplica el despliegue; los valores no se versionan.
+En Docker Desktop/Kubernetes, la imagen `ms-despacho:local` debe estar disponible para el nodo. Para EKS, el workflow construye una imagen etiquetada por SHA y la publica en ECR. El runner autohospedado efímero del equipo usa el perfil AWS local para autenticarse ante AWS y el clúster; los nodos descargan ECR con su propio rol. Solo se guardan `KUBE_DB_PASSWORD` y `GRAFANA_ADMIN_PASSWORD` como secretos de Actions. El pipeline crea los secretos en el namespace y aplica el despliegue; las claves AWS no se versionan ni se guardan en GitHub.
 
 Las cuatro PVC usan `local-path`, aprovisionado en el nodo EKS y respaldado por el volumen EBS raíz. Este modo conserva datos ante reinicios de pods durante la evaluación, pero no replica ni mueve los datos si se reemplaza el nodo. El clúster académico usa un único nodo para limitar el costo.
 
